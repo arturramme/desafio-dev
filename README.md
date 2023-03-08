@@ -30,6 +30,12 @@ Para finalizar a execução:
 docker-compose down
 ```
 
+O projeto conta com dois métodos de API:
+```
+POST transaction/financial/cnab - inserção do cnab na base de dados
+GET transactions/financial - consulta das transações financeiras agrupados por loja
+```
+
 ## ⚙️ Executando os testes
 
 O projeto conta com testes unitários automatizados. Para iniciar os testes, siga os passos abaixo:
