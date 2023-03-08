@@ -1,0 +1,130 @@
+﻿@page "/"
+@using System.Globalization;
+@inject IHttpClientFactory ClientFactory
+@using System.Text;
+@using System.Text.Json;
+@using domain;
+
+<PageTitle>Desafio DEV</PageTitle>
+
+<h1>Desafio DEV!</h1>
+
+<InputFile OnChange="UploadFile"></InputFile>
+
+@if (transactions == null)
+{
+    <p><em>Loading...</em></p>
+}
+else
+{
+    @foreach (var store in transactions)
+    {
+        <table class="table">
+            <caption>@store.Name - (Saldo em conta: @store.AccountBalance.ToString("C", CultureInfo.GetCultureInfo("pt-BR")))</caption>
+            <thead>
+                <tr>
+                    <th>Tipo da transação</th>
+                    <th>Data e Hora da ocorrência</th>
+                    <th>Valor da movimentação</th>
+                    <th>CPF do beneficiário</th>
+                    <th>Cartão utilizado na transação</th>
+                    <th>Nome do representante da loja</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var transaction in store?.FinancialTransactions)
+                {
+                    <tr>
+                        <td>@(Enum.GetName((TransactionTypes)transaction.Type))</td>
+                        <td>@transaction.Date.ToString("dd/MM/yyyy HH:mm:ss")</td>
+                        <td>@transaction.Value.ToString("C", CultureInfo.GetCultureInfo("pt-BR"))</td>
+                        <td>@Convert.ToUInt64(transaction.CPF).ToString(@"000\.000\.000\-00")</td>
+                        <td>@transaction.Card</td>
+                        <td>@transaction.StoreOwner</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+}
+
+@code {
+    private const string endpoint = "http://172.17.0.1:5185"; //172.17.0.1
+
+    private ICollection<Store>? transactions;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await GetFinancialTransactions();
+    }
+
+    private async Task UploadFile(InputFileChangeEventArgs e)
+    {
+        var transactionsCollection = new List<FinancialTransaction>();
+
+        try
+        {
+            var cnab = e.File;
+            string line;
+
+            using (var reader = new StreamReader(cnab.OpenReadStream()))
+                while ((line = await reader.ReadLineAsync()) != null)
+                {
+                    var memory = line.AsMemory();
+
+                    FinancialTransaction transaction = new();
+
+                    var type = memory.Slice(0, 1);
+                    var dateUnparsed = memory.Slice(1, 8);
+                    var value = memory.Slice(9, 10);
+                    var cpf = memory.Slice(19, 11);
+                    var card = memory.Slice(30, 12);
+                    var timeUnparsed = memory.Slice(42, 6);
+                    var storeOwner = memory.Slice(48, 14);
+                    var storeName = memory.Slice(62, 18);
+
+                    transaction.PopulateFromCnab(
+                        type.Span, dateUnparsed.Span, value.Span, cpf, card, timeUnparsed.Span, storeOwner, storeName);
+
+                    transactionsCollection.Add(transaction);
+                }
+
+            using StringContent jsonContent = new(
+                JsonSerializer.Serialize(transactionsCollection),
+                Encoding.UTF8,
+                "application/json");
+
+            var client = ClientFactory.CreateClient();
+            client.BaseAddress = new Uri(endpoint);
+
+            var response = await client.PostAsync("transaction/financial/cnab", jsonContent);
+
+            response.EnsureSuccessStatusCode();
+
+            await GetFinancialTransactions();
+        }
+        catch (HttpRequestException httpError)
+        {
+            throw;
+        }
+        catch (Exception) { throw; }
+    }
+
+    private async Task GetFinancialTransactions()
+    {
+        var client = ClientFactory.CreateClient();
+        client.BaseAddress = new Uri(endpoint);
+
+        var response = await client.GetAsync("transactions/financial");
+        if (response.IsSuccessStatusCode)
+        {
+            var options = new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                };
+
+            transactions = JsonSerializer.Deserialize<List<Store>>(await response.Content.ReadAsStringAsync(), options);
+        }
+    }
+}
